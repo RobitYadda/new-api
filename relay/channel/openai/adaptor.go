@@ -350,7 +350,74 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 
+	if info.ChannelType == constant.ChannelTypeOpenRouter && len(request.ExtraBody) > 0 {
+		if err := normalizeOpenRouterExtraBody(request); err != nil {
+			return nil, err
+		}
+		requestWithExtraBody, err := mergeOpenRouterExtraBody(request)
+		if err != nil {
+			return nil, err
+		}
+		return requestWithExtraBody, nil
+	}
+
 	return request, nil
+}
+
+func normalizeOpenRouterExtraBody(request *dto.GeneralOpenAIRequest) error {
+	extraBody := make(map[string]any)
+	if err := common.Unmarshal(request.ExtraBody, &extraBody); err != nil {
+		return fmt.Errorf("error unmarshalling extra_body for openrouter: %w", err)
+	}
+
+	google, ok := extraBody["google"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	imageConfig, ok := google["image_config"]
+	if !ok {
+		return nil
+	}
+
+	if _, exists := extraBody["image_config"]; !exists {
+		extraBody["image_config"] = imageConfig
+	}
+	delete(google, "image_config")
+	if len(google) == 0 {
+		delete(extraBody, "google")
+	} else {
+		extraBody["google"] = google
+	}
+
+	normalizedExtraBody, err := common.Marshal(extraBody)
+	if err != nil {
+		return fmt.Errorf("error marshalling normalized extra_body for openrouter: %w", err)
+	}
+	request.ExtraBody = normalizedExtraBody
+	return nil
+}
+
+
+func mergeOpenRouterExtraBody(request *dto.GeneralOpenAIRequest) (map[string]any, error) {
+	requestBody := make(map[string]any)
+	requestBytes, err := common.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("error marshalling openrouter request: %w", err)
+	}
+	if err = common.Unmarshal(requestBytes, &requestBody); err != nil {
+		return nil, fmt.Errorf("error unmarshalling openrouter request body: %w", err)
+	}
+
+	extraBody := make(map[string]any)
+	if err = common.Unmarshal(request.ExtraBody, &extraBody); err != nil {
+		return nil, fmt.Errorf("error unmarshalling extra_body for openrouter merge: %w", err)
+	}
+	delete(requestBody, "extra_body")
+	for key, val := range extraBody {
+		requestBody[key] = val
+	}
+	return requestBody, nil
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
